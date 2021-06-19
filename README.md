@@ -1,10 +1,10 @@
 ```
    sparg   s parg   sparg   s parg  sparg 
-  spa  rg  sp   ar sp  arg  spa    sp   ar
-  spa      gs   pa sp  arg  rg     gs   pa
-    rgsp   rgspar  sp  arg  sp     rg   sp
-      arg  gs      sp  arg  ar      argspa
-  sp  arg  pa      sp  arg  gs          rg
+  spa  rg  sp   ar sp   ar  spa    sp   ar
+  spa      gs   pa gs   pa  rg     gs   pa
+    rgsp   rgspar  rg   sp  sp     rg   sp
+      arg  gs      ar   gs  ar      argspa
+  sp  arg  pa      pa   rg  gs          rg
    sparg   rg       spar g parg     sparg
 ```
 
