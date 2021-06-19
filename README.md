@@ -10,3 +10,7 @@
 
 Estimating dispersal and locating genetic ancestors with genome-wide genealogies
 
+## Acknowledgements
+Some code for importance sampling adapted from https://github.com/35ajstern/palm.
+Organization of this repo follows https://github.com/vsbuffalo/cvtkpy.
+Logo inspired by concrete poetry of bpNichol.
