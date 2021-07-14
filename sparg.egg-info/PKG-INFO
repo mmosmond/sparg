@@ -1,0 +1,17 @@
+Metadata-Version: 2.1
+Name: sparg
+Version: 0.0.1
+Summary: A python package to estimate dispersal rates and locate genetic ancestors from genome-wide genealogies (Osmond & Coop 2021)
+Home-page: https://github.com/mmosmond/sparg
+Author: Matthew Osmond
+Author-email: mm.osmond@utoronto.ca
+License: UNKNOWN
+Description: # sparg
+        Estimating dispersal and locating genetic ancestors with genome-wide genealogies
+        
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: GNU GPLv3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
