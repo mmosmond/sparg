@@ -22,6 +22,10 @@ setuptools.setup(
     ],
     install_requires=[
         'numpy',
+        'scipy',
+        'dendropy',
+        'tskit',  
+        'tqdm'
     ],
     python_requires='>=3.9',
 )

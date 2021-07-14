@@ -1,26 +1,12 @@
 import numpy as np
 from scipy.optimize import minimize
-from sparg.importance import _log_birth_density
-from sparg.utils import _lognormpdf, _logsumexp, _get_focal_index
+from sparg.utils import _get_focal_index, _lognormpdf, _logsumexp, _sigma_phi
+from sparg.importance_sampling import _log_birth_density
 
-def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None, tsplits=[], importance=True, weight=True, BLUP=False, x0=[0,0], bnds=((None,None),(None,None)), method='L-BFGS-B'):
+def locate(nodes, times, treefiles, mlefiles, locations, tCutoff=1e4, importance=True, x0=[0,0], bnds=((None,None),(None,None)), method='L-BFGS-B', weight=True, keep=None, tsplits=[], BLUP=False):
+
     """
-    locate ancestors
-
-    treefiles: files containing information about local trees (coalescent times, probability of the coalescent times under a Yule prcess, shared evolutionary times, and subtree structure)
-    mlefiles: files containing dispersal rate and Yule branching rate
-    nodes: the samples we want to find the ancestors of
-    times: the times to locate the ancestors
-    locations: locations of all sample nodes
-    keep: list of samples we use in inference (if None use all sample nodes)
-    tCutoff: time to cut tree off to ignore deeper relationships (if None go back to MRCA of all samples)
-    tsplits: split times between epochs
-    importance: whether or not to use importance sampling over branch length estimates
-    weight: whether to calculate and output weights (for inverse variance weighting of locations across loci)
-    BLUP: whether to analytically calculate the average of MLE location across branch length estimates (otherwise find the max of the average log likelihood) 
-    x0: starting point for maximum finder
-    bnds: bounds for parameters in maximum finder
-    method: method of scipy's minimizer
+    locate nodes=nodes at times=times using trees (treefiles), mle dispersal (mlefiles), and sample locations (locations)
     """
 
     # loop over loci
@@ -42,13 +28,7 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
 
         # load mle dispersal and branching rate at this locus
         x = np.load(mlefile, allow_pickle=True).item().x
-        SIGMA = []
-        for i in range(len(tsplits) + 1):
-            SIGMA.append(np.array([[x[3*i]**2, x[3*i]*x[3*i+1]*x[3*i+2]], [x[3*i]*x[3*i+1]*x[3*i+2], x[3*i+1]**2]])) #append matrices for each epoch (chronological order)
-        if importance:
-            phi = x[-1]/scale_phi
-        else:
-            phi = 1 #irrelevant and arbitary value if not importance sampling
+        [SIGMA, phi] =  _sigma_phi(x, tsplits, importance) 
         
         # loop over times
         mle_locations_t = [] #locations for all nodes at all loci at this time
@@ -56,22 +36,20 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
         for time in times:
 
             # loop over nodes
-            mle_locations_i = [] #locations of ancestors of all nodes at particular time at this locus
+            mle_locations_i = [] #locations for all nodes at particular time at this locus
             weights_i = []
             for focal_node in nodes:
                 
                 # get location of node i at time t at locus
-                f = _ancestor_location_meanloglikelihood(coal_times, pcoals, shared_times, samples, locations, focal_node, keep=keep, phi=phi, SIGMA=SIGMA, time=time, tCutoff=tCutoff, importance=importance, tsplits=tsplits, BLUP=BLUP) #mean log likelihood or mean MLE (if BLUP)
+                f = _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_times, samples, locations, keep=keep, phi=phi, SIGMA=SIGMA, locus=0, tCutoff=tCutoff, importance=importance, tsplits=tsplits, BLUP=BLUP) #mean log likelihood or mean MLE (if BLUP)
 
-                # if there is an error then f will be None 
                 if f is None:
                     mle_locations_i.append(np.ones(len(x0)) * np.nan)
                     #print('locating ancestor of %d at time %d failed at a locus' %(focal_node, time))
-                
-                # otherwise
+
                 else:
 
-                    # if we want the best linear unbiased predictor (BLUP), ie the average MLE 
+                    # if we want the best linear unbiased predictor (BLUP), ie the importance sampled MLE 
                     if BLUP:
                    
                         mle_locations_i.append(f) #just add mean MLE
@@ -79,7 +57,7 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
                         if weight:
                             print('weights not implemented for BLUPs, if you want weights set BLUP=False')
     
-		    # otherwise find the max of the average log likelihood
+		    # find the true MLE by finding the max of the average log likelihood across importance samples
                     else:
     
                         g = lambda x: -f(x) #flip bc we look for min
@@ -93,9 +71,9 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
     
                         # we may want to weight locations over loci depending on how certain the estimate is
                         if weight:
-                            if method == 'L-BFGS-B':
+                            if method=='L-BFGS-B':
                                 if gmin.success:
-                                    if gmin.x[0] > bnds[0][0] and gmin.x[0] < bnds[0][1] and gmin.x[1] > bnds[1][0] and gmin.x[1] < bnds[1][1]: # if did not hit bounds 
+                                    if gmin.x[0] > bnds[0][0] and gmin.x[0] < bnds[0][1] and gmin.x[1] > bnds[1][0] and gmin.x[1] < bnds[1][1]: # if did not hit bounds
                                         cov = gmin['hess_inv'].todense() #inverse hessian (negative fisher info) is estimate of covariance matrix
                                         weights_i.append(cov) #append covariance matrix as weights
                                     else:
@@ -103,7 +81,7 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
                                 else:
                                     weights_i.append(np.zeros((len(x0)-1, len(x0)-1))) #dont use this estimate if numerical minimizer failed                
                             else:
-                                weights_i.append(1) #weight all estimates equally if don't have the hessian (which we only get from some minimize methods)
+                                weights_i.append(1) #weights all equally if don't have the hessian
                                 print('choose method=L-BFGS-B if you want weights')
 
             mle_locations_t.append(mle_locations_i) #append locations across all nodes for particular time at particular locus
@@ -111,30 +89,16 @@ def locate(treefiles, mlefiles, nodes, times, locations, keep=None, tCutoff=None
         mle_locations.append(mle_locations_t) #append locations acrocss all nodes and all times for particular locus
         weights.append(weights_t) #append weights acrocss all nodes and all times for particular locus
 
+    #print(mle_locations)
+
     if weight:
         return np.array(mle_locations), np.array(weights)
     else:
         return np.array(mle_locations) 
 
-def _ancestor_location_meanloglikelihood(coal_times, pcoals, shared_times, samples, locations, focal_node, time, locus=0, keep=None, phi=1, SIGMA=None, tCutoff=None, tsplits=[], importance=True, BLUP=False):
+def _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_times, samples, locations, keep=None, phi=1, SIGMA=None, locus=0, tCutoff=1e4, importance=True, tsplits=[], BLUP=False):
     """
-    mean log likelihood of ancestor location
-
-    coal_times: coalescent times
-    pcoals: probability of coalescent times
-    shared_times: shared evolutionary times in subtrees
-    samples: samples in each subtree
-    locations: locations of all samples
-    focal_node: node we are finding the ancestor of
-    time: generations ago to find ancestor
-    locus: which locus we are finding ancestor at (defaults to 0 because often supply only 1)
-    keep: which sample locations to use (if None use all)
-    phi: branching rate in Yule process (for importance sampling)
-    SIGMA: dispersal rate
-    tCutoff: time to go back to (ignore deeper times; None means go back to MRCA)
-    tsplits: split times between epochs
-    importance: whether to importance sample or not
-    BLUP: whether to calculate mean MLE, else mean log likelihood
+    log likelihood of ancestor location (ancestor of node=node at time=time) averaged over sampled trees, calculated using the coalescent times (coal_times), probability of the coalescent times (pcoals), shared evolutionary times (shared_times), and locations (locations). samples connects the tips of the trees with locations.
     """
 
     fs = []
@@ -142,237 +106,256 @@ def _ancestor_location_meanloglikelihood(coal_times, pcoals, shared_times, sampl
     #loop over trees (importance samples) at a locus
     for tree,sample in enumerate(samples[locus]): 
         
-        n,m = _get_focal_index(focal_node, sample) #subtree and sample index of focal_node
-        sts = shared_times[locus][tree][n] #shared times between all samples in subtree
-        sts_focal_focal = sts[m,m] - time #shared time of ancestor with itself
-        
-        # calculate shared times with ancestor
-        Atimes = [] 
-
-        # if we're not excluding any samples
+        # get shared times and sample locations
+        n,m = _get_focal_index(node, sample) #subtree and sample index of focal_node
+        sts = shared_times[locus][tree][n] #shared times between all sample lineages in subtree
+        atimes = _atimes(sts, time, m) #get shared times between sample lineages and ancestor lineage
         if keep is None:
-            for st in sts[m]:
-                Atimes.append(min(st,sts_focal_focal)) # shared times between ancestor and each sample
+            alltimes = _alltimes(sts, atimes, keep=keep)
             locs = locations[sample[n]] #locations of samples
-
-        # if we are excluding some samples
         else:
             ixs = np.where(np.in1d(sample[n], keep))[0] #what indices are we keeping location info for
-            for st in sts[m][ixs]:
-                Atimes.append(min(st,sts_focal_focal)) # shared times between focal and kept samples
-            sts = sts[ixs][:,ixs] #keep these shared_times among samples
+            alltimes = _alltimes(sts, atimes, keep=ixs) #combine into one covariance matrix (and filter to keep)
             sample_keep = [sample[n][ix] for ix in ixs] #keep these samples
             locs = locations[sample_keep] #locations of kept samples
-        
-        Atimes.append(sts_focal_focal) #add shared time with itself
- 
-        # log likelihoods (or MLEs) across importance samples 
-        fs.append(_ancestor_location_loglikelihood(sts, locs, SIGMA=SIGMA, Atimes=Atimes, tsplits=tsplits, MLE_only=BLUP)) 
+       
+        # append ancestor mle or likelihood
+        if BLUP:
+           
+            ahat = _ahatavar(alltimes, locs, tsplits, SIGMA, ahat_only=BLUP) #the mle only
+            fs.append(ahat)
 
+        else:
+
+            try:
+                ahat, avar = _ahatavar(alltimes, locs, tsplits, SIGMA, ahat_only=BLUP) #mle and covariance
+                if np.linalg.matrix_rank(avar) == len(avar):
+                    fs.append(lambda x: _lognormpdf(x, ahat, avar, relative=False)) #log likelihood
+                else:
+                    #print('singular matrix')
+                    fs.append(lambda x: 0) #uninformative function (not a function of x so should not affect optima finder)
+            except:
+                fs.append(lambda x: 0) #this is in case there is problem with inverting matrices in get_ahatavar  
+ 
         # importance weights
         if importance:
             ws.append(_log_birth_density(coal_times[locus][tree], phi, tCutoff) - pcoals[locus][tree]) #log importance weight
         else:
             ws.append(0) #equal (log) weights for all
 
-    # make sure at least one importance sample worked
-    if len(fs) == 0:
-        #print('WE HAVE NO IDEA WHERE THIS ANCESTOR IS')
-        return None
+    totw = _logsumexp(ws) #log total weight
 
+    # if we want the Best Linear Unbiased Predictor (BLUP), ie the importance sampled MLE location
+    if BLUP:
+        return sum([mle*np.exp(weight-totw) for mle,weight in zip(fs, ws)]) #average MLE
+
+    # if we want the full importance sampled log likelihood
     else:
-        
-        totw = _logsumexp(ws) #log total weight
+        return lambda x: _logsumexp([f(x) + ws[i] for i,f in enumerate(fs)]) - totw #average log likelihood
 
-        # if we want the Best Linear Unbiased Predictor (BLUP), ie the importance sampled MLE location
-        if BLUP:
-            return sum([mle*np.exp(weight-totw) for mle,weight in zip(fs, ws)]) #average MLE
+def _ahatavar(alltimes, locations, tsplits=[], SIGMA=None, ahat_only=False):
 
-        # if we want the full importance sampled log likelihood
-        else:
-            return lambda x: _logsumexp([f(x) + ws[i] for i,f in enumerate(fs)]) - totw #average log likelihood
-
-def _ancestor_location_loglikelihood(shared_time, locs, Atimes=None, focal_node=None, t=None, SIGMA=None, tsplits=[], MLE_only=False):
     """
-    log likelihood location of ancestor of focal_node t generations ago
-
-    shared_time: shared times between samples in subtree
-    locs: locations of samples in subtree
-    Atimes: shared times between ancestor and sample lineages (if None must supply focal_node and t)
-    focal_node: node to find ancestor of 
-    t: time to find ancestor at
-    SIGMA: dispersal rate
-    tsplits: split times between epochs
-    MLE_only: whether to just give the MLE location, else the log likelihood
+    Calculate mean and covariance in ancestor location using shared times (alltimes) and sample locations (locations)
     """
-
-    tplus = 0 #time beyond the mrca 
-    tmrca = shared_time[0][0] #time to mrca
     
-    # special case of only one sample (Brownian motion is just linear increase in variance around this sample location)
-    if len(shared_time) == 1:
-        #print('locating ancestor with only 1 sample location')
-        Ahat = locs[0] #best guess for ancestor location is just where lone sample is
-        if MLE_only:
-            return Ahat
-        else:
-            if t == None:
-                t = -Atimes[0] #time we want the ancestor location (-(tmrca - t) = t)
-                shared_time[0,0] = t #tmrca=0 but want to go back to t
-                Atimes = np.array([0,0]) #ancestor back at t so no shared time with itself of sample lineages
-                #print('locating ancestor at time %d, if want another time supply t' %t)
-            ts = [0] + [i for i in tsplits if i<t] + [t] #start and end times of relevant epochs
-            cts = [ts[i+1] - ts[i] for i in range(len(ts)-1)] #time spent in each epoch
-            Avar = sum([ct * SIGMA[i] for i,ct in enumerate(cts)]) #variance increases like t*SIGMA in each epoch, and sum together               
-            if np.linalg.matrix_rank(Avar) == len(Avar):
-                 return lambda x: _lognormpdf(x, Ahat, Avar, relative=False) #normal distribution with mean and variance as above
-            else:
-                 print('singular matrix with single sample!')
-                 return
+    if np.any(alltimes < 0):
+        print('error: cant have negative shared times')
+        return
 
-    # shared times between ancestor and all sample lineages
-    if Atimes is None: #if not passing shared times between ancestor and sample lineages directly, calculate
-        tAA = tmrca - t #time to mrca from ancestor (ie shared time with itself)
-        Atimes = [] #empty vector for shared times with other nodes
-        for st in shared_time[focal_node]: #for each time the focal node shares with all other nodes
-            Atimes.append(np.min([tAA, st])) #the shared time with the ancestor of the focal node is the smaller of tAA and the time shared with the focal node
+    if len(alltimes) < 2:
+        print('error: need at least one sample to locate ancestor')
+        return
 
-    else: #if we do pass the times directly, separate the shared times
-        tAA = Atimes[-1] #shared time of ancestor with itself
-        Atimes = Atimes[:-1] #shared times with samples    
-
-    # dealing with ancestors beyond the mrca
-    if tAA < 0:  
-        #print('locating ancestor beyond the mrca')
-        tplus = -tAA #extra time beyond the mrca we need to deal with
-        Atimes = [0 for _ in Atimes] #make shared times with all samples zero
-        tAA = 0 #shared time with self zero
-
-    n,d = locs.shape #number of samples and spatial dimensions
+    tmrca = alltimes[-1,-1] #time to mrca
     
-    # combine shared times into one matrix (will need it below)     
-    stime = np.zeros((n+1,n+1))
-    stime[0,0] = tAA #first diagonal element
-    stime[0,1:] = Atimes #remainder of first row
-    stime[1:,0] = Atimes #remainder of first column
-    stime[1:,1:] = shared_time #remainder of matrix
+    no_descendants = alltimes[0,0] > 0 and all(alltimes[0,1:] == 0)  #ancestor has no direct descendants?
+    #if no_descendants:
+    #    print('note: no direct descendants in this tree') 
 
-    # split (back) into component matrices
-    Sigma11 = stime[:1,:1] #[[tAA]]
-    Sigma12 = stime[:1,1:] #Atimes
-    Sigma21 = stime[1:,:1] #Sigma12.reshape(-1,1)
-    Sigma22 = stime[1:,1:] #shared_time
-    
-    # mean centering tools
-    Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[:-1] #mean centering matrix
-    x = np.array([[1] + [-1/n] * n]) #vector to mean center ancestors variance
-
-    # mean center the locations
-    locationsc = np.matmul(Tmat, locs)
-    
-    # if just one epoch
-    if tsplits == []:
-        
-        # mean center the covariance matrices
-        Sigma11c = np.matmul(np.matmul(x, stime) , x.transpose()) #mean centered ancestor variance
-        Sigma21c = np.matmul(Tmat, Sigma21) - np.matmul( np.matmul(Tmat, Sigma22), np.ones(n).reshape(-1,1))/n #mean centered covariance between ancestor and samples
-        Sigma22c = np.matmul(Tmat, np.matmul(Sigma22, np.transpose(Tmat))) #mean centered covariance of samples
-
-        # mle ancestor location
-        try:
-            Sigma22c_pinv = np.linalg.pinv(Sigma22c) #take generalized inverse (need it again for variance)
-        except:
-            print('SVD failed')
-            return lambda x: 0 #if inverse fails return non-informative function
-        Ahat = np.mean(locs, axis=0) + np.matmul( np.matmul(Sigma21c.transpose(), Sigma22c_pinv), locationsc)
-        Ahat = Ahat[0]
-
-        # if just want MLE
-        if MLE_only:
-            return Ahat
-
-        # if we want full (log) likelihood        
-        else:
-
-            # get MLE dispersal rate if nothing supplied
-            if SIGMA is None: #if not given, and only one epoch, then estimate with mle
-                Tinv = np.linalg.pinv(np.array(Sigma22c)) #inverse of centered shared time matrix
-                SIGMA = [np.matmul(np.matmul(np.transpose(locationsc), Tinv), locationsc) / (n-1)] #mle
-                
-            # covariance matrix in ancestor location
-            Avar = (Sigma11c - np.matmul( np.matmul(Sigma21c.transpose(), Sigma22c_pinv), Sigma21c)) * SIGMA[0] + tplus * SIGMA[0]
-        
-    # if more than one epoch
-    else:
+    # special case of only one sample, which means we can't mean center
+    if len(alltimes) == 2:
         
         if SIGMA is None:
-            print('gotta supply SIGMA if more than 1 epoch cause cant solve for MLE')
+            print('error: gotta supply SIGMA: cant estimate from a tree with one lineage!')
             return
-        if len(SIGMA) != len(tsplits)+1 or SIGMA[0].shape != (d,d):
-            print('need as many SIGMAs as epochs, which is one more than the number of tsplits')
-            return
-       
-        # length of each epoch
-        split_times = [0] + [t for t in tsplits if t < tmrca] + [tmrca] #ignore times deeper than tmrca and append end points
-        Ts = [split_times[i+1] - split_times[i] for i in range(len(split_times)-1)] #amount of time in each epoch
-        nzeros = len(SIGMA) - len(Ts) #number of epochs missing from tree
-        Ts = Ts + [0] * nzeros #add zeros for missing epochs
-    
-        # covariance in each epoch (we go in chronolgical order, from most distant to most recent -- make sure SIGMA the same)
-        covs = []
-        cumulative_time = 0
-        for i in range(len(Ts)):
-            rstime = stime - cumulative_time #subtract off time already moved down the tree, this is the remaining shared time
-            rstime = np.maximum(rstime, 0) #make negative values 0
-            rstime = np.minimum(rstime, Ts[-i-1]) #can only share as much time as length of epoch
-            covs.append(np.kron(rstime, SIGMA[i]))
-            cumulative_time += Ts[-i-1] #add time moved down tree
-
-        extra_cov = 0
-        if tplus > 0:
-            #covariance beyond the tmrca 
-            extra_time = [cumulative_time] + [t for t in tsplits if t>cumulative_time] + [tmrca + tplus] #split times beyond trmca
-            extra_time = [extra_time[i+1] - extra_time[i] for i in range(len(extra_time)-1)] #cumulative times in each epoch
-            extra_cov = sum([extra_time[-i-1] * SIGMA[-i-1] for i in range(len(extra_time))]) #covariance summed over epochs
-
-        # split into component matrices
-        cov = np.sum(covs, axis=0)
-        Sigma11 = cov[:d,:d] 
-        Sigma12 = cov[:d,d:] 
-        Sigma21 = cov[d:,:d] 
-        Sigma22 = cov[d:,d:]
         
-        # mean centering tools (update to new shape)
-        Tmat = np.kron( Tmat, np.identity(d)); #mean centering matrix
-        x = np.kron( x, np.identity(d)) #vector to mean center ancestors variance
+        ahat = locations[0] #best guess for ancestor location is just where lone sample is
+
+        if ahat_only:
+            return ahat
         
+        # variance accumulated going up from the sample
+        ts = [0] + [t for t in tsplits if t < tmrca] + [tmrca] #start and end times of relevant epochs
+        cts = [ts[i+1] - ts[i] for i in range(len(ts)-1)] #time spent in each epoch
+        avar = sum([ct * SIGMA[-i-1] for i,ct in enumerate(cts)])
+        
+        # if the ancestor has no direct descendants then we need to add some extra variance
+        if no_descendants:
+        
+            # variance accumalated going down to the ancestor
+            ta = tmrca - alltimes[0,0] #time the ancestor was alive
+            # going in reversed order this time
+            ts = [tmrca] + [t for t in tsplits[::-1] if t < tmrca and t > ta] + [ta] #start and end times of relevant epochs
+            cts = [ts[i] - ts[i+1] for i in range(len(ts)-1)] #time spent in each epoch
+            epoch_ix = len([t for t in tsplits if t < tmrca]) #which epoch is tmrca in
+            avar += sum([ct * SIGMA[::-1][epoch_ix - i] for i,ct in enumerate(cts)]) 
+
+    # if more than one sample we can mean center to get correct variance in all cases
+    elif len(alltimes) > 2:
+
+        # mean centering tools
+        n = len(locations) #number of samples
+        Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[:-1] #mean centering matrix
+        x = np.array([[1] + [-1/n] * n]) #vector to mean center ancestors variance
+
+        # mean center the locations
+        locationsc = np.matmul(Tmat, locations)
+                
+        # if only one epoch the relevant covariance matrices are
+        if len(tsplits) == 0:
+        
+            # split into component matrices
+            cov = alltimes
+            d = 1
+            Sigma11 = cov[:1,:1] 
+            Sigma12 = cov[:1,1:]
+            Sigma21 = cov[1:,:1] 
+            Sigma22 = cov[1:,1:]
+        
+        # if more than one epoch the relevant covariance matrices are
+        else:
+            
+            if SIGMA is None:
+                print('error: gotta supply SIGMA if more than 1 epoch cause cant solve for MLE')
+                return
+            if len(SIGMA) < len(tsplits)+1:
+                print('error: need as many SIGMAs as epochs, which is one more than the number of tsplits')
+                return
+
+            # calculate time spent in each epoch
+            split_times = [0] + [t for t in tsplits if t < tmrca] + [tmrca] #ignore times deeper than tmrca and append end points
+            ts = [split_times[i+1] - split_times[i] for i in range(len(split_times)-1)] #amount of time in each epoch
+            nzeros = len(SIGMA) - len(ts) #number of epochs missing from tree
+            ts = ts + [0] * nzeros #add zeros for missing epochs
+
+            # add up covariance in each epoch (we go in chronolgical order, from most distant to most recent -- make sure SIGMA the same)
+            covs = []
+            ct = 0
+            for i in range(len(ts)):
+                rstime = alltimes - ct #subtract off time already moved down the tree, this is the remaining shared time
+                rstime = np.maximum(rstime, 0) #make negative values 0
+                rstime = np.minimum(rstime, ts[-i-1]) #can only share as much time as length of epoch
+                covs.append(np.kron(rstime, SIGMA[i]))
+                ct += ts[-i-1] #add time moved down tree
+
+            # split into component matrices
+            cov = np.sum(covs, axis=0)
+            d = len(SIGMA[0]) #number of spatial dimensions
+            SIGMA = [1] #dummy variable for below, since SIGMA already incorporated into cov
+            Sigma11 = cov[:d,:d]
+            Sigma12 = cov[:d,d:]
+            Sigma21 = cov[d:,:d]
+            Sigma22 = cov[d:,d:]
+            
+            # mean centering tools (update to new shape)
+            Tmat = np.kron( Tmat, np.identity(d)); #mean centering matrix
+            x = np.kron( x, np.identity(d)) #vector to mean center ancestors variance
+
         # mean center the covariance matrices
-        Sigma11c = np.matmul(np.matmul(x, cov) , x.transpose()) #mean centered ancestor variance
+        Sigma11c = np.matmul(np.matmul(x, cov), x.transpose()) #mean centered ancestor variance
         Sigma21c = np.matmul(Tmat, Sigma21) - np.matmul( np.matmul(Tmat, Sigma22), np.kron(np.ones(n).reshape(-1,1), np.identity(d)))/n #mean centered covariance between ancestor and samples
         Sigma22c = np.matmul(Tmat, np.matmul(Sigma22, np.transpose(Tmat))) #mean centered covariance of samples
-        
-        # mle ancestor location
+
+        # invert matrix of (mean centered) shared times
         try:
-            Sigma22c_pinv = np.linalg.pinv(Sigma22c) #take generalized inverse (need it again for variance)
+            Sigma22c_pinv = np.linalg.pinv(Sigma22c) #take generalized inverse
         except:
-            print('SVD failed')
-            return lambda x: 0 #if inverse fails return non-informative function
-        Ahat = np.mean(locs, axis=0) + np.matmul( np.matmul(Sigma21c.transpose(), Sigma22c_pinv), np.kron(locationsc, np.ones(d).reshape(-1,1)))[0] #this seems pretty silly but works
+            print('error: SVD failed')
+            return 
 
-        # if we only want MLE
-        if MLE_only:
-            return Ahat
+        # mle ancestor location
+        ahat = np.mean(locations, axis=0) + np.matmul(np.matmul(Sigma21c.transpose(), Sigma22c_pinv), np.kron(locationsc, np.ones(d).reshape(-1,1)))[0]
+
+        if ahat_only:
+            return ahat
+
+        # get MLE dispersal rate if nothing supplied
+        if SIGMA is None: #if not given, and only one epoch, then estimate from this tree alone
+            SIGMA = [np.matmul(np.matmul(np.transpose(locationsc), Sigma22c_pinv), locationsc) / (n-1)]
+
+        # covariance in ancestor location
+        avar = (Sigma11c - np.matmul( np.matmul(Sigma21c.transpose(), Sigma22c_pinv), Sigma21c)) * SIGMA[0] 
+           
+    return ahat, avar
+
+def _alltimes(stimes, atimes, keep=None):
+
+    """
+    combine shared times between sample lineages (stimes) and shared times of samples with ancestral lineage (atimes)
+    """
+
+    # filter out samples we don't want to use for locating
+    if keep is not None:
+        stimes = stimes[keep][:,keep]
+        atimes = atimes[np.append(keep,-1)] #be sure to keep the last entry (shared time of ancestral lineage with itself)
+    
+    # join stimes and atimes into one matrix
+    n = len(atimes)
+    alltimes = np.zeros((n,n))
+    alltimes[0,0] = atimes[-1] #element in first row and column
+    alltimes[0,1:] = atimes[:-1] #remainder of first row
+    alltimes[1:,0] = atimes[:-1] #remainder of first column
+    alltimes[1:,1:] = stimes #remainder of matrix
+    
+    # trim off excess on the tree
+    alltimes = alltimes - np.min(alltimes)
+
+    return alltimes
+
+def _atimes(stimes, time, focal_index):
+
+    """
+    Calculate shared times of sample lineages with ancestor
+    
+    Parameters
+    ----------
+    stimes : ndarray 
+        matrix of shared times between sample lineages
+    time : non-negative real number
+        time at which the ancestor existed
+    focal_index : integer in [0, len(`stimes`))
+        index of sample whose ancestor we're interested in
         
-        # if we want full (log) likelihood
-        else:
+    Returns
+    -------
+    atimes : ndarray
+        Shared times of each sample lineage (in same order as `stimes`) and ancestor with ancestor
+        
+    Notes
+    -----
+    Can give negative values if `time` > TMRCA, which should be dealt with downstream.
+    
+    Examples
+    --------
+    >>> stimes = np.array([[10,0],[0,10]])
+    >>> _atimes(stimes, 7.5, 0)
+    array([2.5, 0., 2.5])
+    
+    >>> stimes = np.array([[10,0],[0,10]])
+    >>> _atimes(stimes, 12.5, 0)
+    array([-2.5, -2.5, -2.5])
+    """
+    
+    tmrca = stimes[focal_index, focal_index] #time to most recent common ancestor of sample lineages
+    taa = tmrca - time #shared time of ancestor with itself 
 
-            # covariance in ancestor location
-            Avar = (Sigma11c - np.matmul( np.matmul(Sigma21c.transpose(), Sigma22c_pinv), Sigma21c)) + extra_cov
+    atimes = [] 
+    for t in stimes[focal_index]:
+        atimes.append(min(t, taa)) # shared times between ancestor and each sample lineage
 
-    #protection in case entries of Avar so small they become zero
-    if np.linalg.matrix_rank(Avar) == len(Avar):
-        return lambda x: _lognormpdf(x, Ahat, Avar, relative=False)
-    else:
-        #print('singular matrix')
-        return lambda x: 0 #uninformative function (not a function of x so should not affect optima finder)
+    atimes.append(taa) #add shared time with itself
+        
+    return np.array(atimes)
+
 

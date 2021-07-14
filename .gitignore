@@ -1,0 +1,4 @@
+build/
+dist/
+sparg.egg-info/
+*/__pycache__/
