@@ -2,3 +2,5 @@ build/
 dist/
 sparg.egg-info/
 **/__pycache__/
+**/.ipynb_checkpoints/
+tutorial_data/

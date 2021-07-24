@@ -25,7 +25,7 @@ def choose_loci(ts, which=[0], mode='site'):
     elif mode == 'tree':
         which_loci = np.unique([i for i in which if i<ts.num_trees])
        
-    print('number of loci: ',len(which_loci))
+    print('number of loci: ', len(which_loci))
  
     # genomic intervals of each chosen locus
     print('getting intervals...')
@@ -41,7 +41,7 @@ def choose_loci(ts, which=[0], mode='site'):
 
     return which_loci, intervals
 
-def process_trees(which_loci, intervals, tCutoff=1e4, important=True, M=1, infile=None, outfile='temp', PATH_TO_RELATE='', u=1.25e-8, coalfile=None):
+def process_trees_relate(which_loci, intervals, tCutoff=1e4, important=True, M=1, infile=None, outfile='temp', PATH_TO_RELATE='', u=1.25e-8, coalfile=None):
 
     """
     process trees, using Relate to sample branch lengths M times
@@ -73,6 +73,19 @@ def process_trees(which_loci, intervals, tCutoff=1e4, important=True, M=1, infil
 
     return coal_times, pcoals, shared_times, samples 
 
+def process_trees(ts, which_trees, from_ts=False, tCutoff=None, important=True, epochs=None, Nes=None):
+    
+    """
+    convert trees (either newick files or tree sequence) into dendropy trees and process 
+    """
+
+    print('converting to dendropy trees...')
+    trees = _get_dendropy_trees(ts, which_trees=which_trees, from_ts=from_ts) #first convert to denropy
+
+    print('processing...')
+    return _process_trees(trees=trees, epochs=epochs, Nes=Nes, tCutoff=tCutoff, important=important) #then process
+
+
 def _sample_times(PATH_TO_RELATE, infile, coalfile, u = 1.25e-8, M = 10, first_bp = 1, last_bp = 1, outfile = None):
 
     """
@@ -103,28 +116,46 @@ def _sample_times(PATH_TO_RELATE, infile, coalfile, u = 1.25e-8, M = 10, first_b
     
     os.system(script) #run this on the command line, no need to return anything
 
-def _get_dendropy_trees(treefile, which_trees=None, fromts=False):
+def _get_dendropy_trees(treefile, which_trees=None, from_ts=False):
 
     """
     get dendropy trees from file of newick trees
     """
 
-    if which_trees != None:
+    if which_trees is not None:
         progress_bar = tqdm(total=len(which_trees))
 
     trees = []
-    with open(treefile, mode='r') as file:
-        for i,line in enumerate(file): 
-            if which_trees == None: #if using all trees 
-                if i>0: #just skip header
+    if not from_ts: #if taking from newick files
+        with open(treefile, mode='r') as file:
+            for i,line in enumerate(file): 
+                if which_trees is None: #if using all trees 
+                    if i>0: #just skip header
+                        tree = StringIO(line.split()[4]) #convert Newick tree to string
+                        trees.append(dendropy.Tree.get(file=tree, schema='newick')) #append to list of dendropy trees
+                elif i-1 in which_trees: #else if taking a selection of trees, only take those in selection (note we skip the header here)
                     tree = StringIO(line.split()[4]) #convert Newick tree to string
-                    trees.append(dendropy.Tree.get(file=tree, schema='newick')) #append to list of dendropy trees
-            elif i-1 in which_trees: #else if taking a selection of trees, only take those in selection (note we skip the header here)
-                tree = StringIO(line.split()[4]) #convert Newick tree to string
-                trees.append(dendropy.Tree.get(file=tree, schema='newick'))
-                progress_bar.update()
+                    trees.append(dendropy.Tree.get(file=tree, schema='newick'))
+                    progress_bar.update()
+
+    else: #if taking from tree sequence
+        n = treefile.num_samples
+        node_labels = { i: i for i in range(n) }
+        if which_trees is None: #if using all trees
+            for tree in treefile.trees(): #for each tree in tree sequence
+                newick = tree.newick(node_labels=node_labels) #get newick representation
+                trees.append(dendropy.Tree.get(data=newick, schema='newick')) #append to list of dendropy trees
+        else:
+            for i,tree in enumerate(treefile.trees()):
+                if i > max(which_trees):
+                    break
+                if i in which_trees:
+                    newick = tree.newick(node_labels=node_labels) #get newick representation
+                    trees.append(dendropy.Tree.get(data=newick, schema='newick')) #append to list of dendropy trees
+                    progress_bar.update()
+        trees = [[tree] for tree in trees] #reshape so first dimn is loci and second is samples of trees at a locus (here just one sample per locus)
             
-    if which_trees != None:
+    if which_trees is not None:
         progress_bar.close()
 
     return trees
@@ -141,7 +172,7 @@ def _get_epochs(coalfile):
 
     return epochs,N
 
-def _process_trees(trees, epochs, N, tCutoff=1e4):
+def _process_trees(trees, Nes=None, epochs=None, tCutoff=None, important=True):
 
     """
     function to get summaries of trees that dont depend on parameters
@@ -159,9 +190,10 @@ def _process_trees(trees, epochs, N, tCutoff=1e4):
         shared_times_i = []
         samples_i = []
         for tree in locus:
-            cts = _coal_times(tree) #coalescence times
-            coal_times_i.append(cts)
-            pcoals_i.append(_log_coal_density(cts, epochs, N, tCutoff)) #probability of coalescence times in neutral coalescent
+            if important:
+                cts = _coal_times(tree) #coalescence times
+                coal_times_i.append(cts)
+                pcoals_i.append(_log_coal_density(cts, Nes, epochs, tCutoff)) #probability of coalescence times in neutral coalescent
             sts = _shared_times(tree, tCutoff) #shared times and samples for each subtree
             shared_times_i.append(sts[0])
             samples_i.append(sts[1])
@@ -170,11 +202,15 @@ def _process_trees(trees, epochs, N, tCutoff=1e4):
         shared_times.append(shared_times_i)
         samples.append(samples_i)
         progress_bar.update()
-    progress_bar.close(); del progress_bar
+    progress_bar.close()
 
-    return coal_times, pcoals, shared_times, samples
+    if important:
+        return coal_times, pcoals, shared_times, samples
 
-def _shared_times(tree, tCutoff=1e4):
+    else:
+        return shared_times, samples
+
+def _shared_times(tree, tCutoff=None):
     
     """
     get shared evolutionary times between sampled lineages from dendropy tree
@@ -190,27 +226,32 @@ def _shared_times(tree, tCutoff=1e4):
             tmrcas[j,i] = tmrcas[i,j] #symmetric
 
     tmrca = np.max(tmrcas) #time to most recent common ancestor of all samples
-# #     shared_time = tmrca - tmrcas #shared times
-# #     shared_time = shared_time - (tmrca - min(tCutoff, tmrca)) #shared time since tCutoff (or tmrca, if less)
-    shared_time = min(tCutoff, tmrca) - tmrcas #combine 2 steps above 
 
-    # times for subtrees
-    i = 0 #start with first sample
-    withi = shared_time[i]>=0 #true if share time with i
-    timesi = shared_time[withi][:,withi] #shared times
-    timesi = timesi - np.min(timesi) #trim off lineage from mrca to tcutoff
-    times = [timesi] #start list with shared times of subtree with i
-    samples = [np.where(withi)] #samples in this subtree
-    taken = withi #samples already in a subtree
+    # if we're not chopping the tree into subtrees
+    if tCutoff is None or tCutoff > tmrca:
+        times = [tmrca - tmrcas] #shared times
+        samples = [range(n)] #samples
 
-    while sum(taken) < n: #while some samples not yet in a subtree
-        i = np.argmax(taken == False) #choose next sample not yet in a subtree
-        withi = shared_time[i]>=0 #true if share time with i
-        timesi = shared_time[withi][:,withi] #shared times of subtree with i
-        timesi = timesi - np.min(timesi) #trim
-        times.append(timesi) #append        
-        samples.append(np.where(withi)) #samples in this subtree
-        taken = np.array([i[0] or i[1] for i in zip(taken,withi)]) #samples already in a subtree
+    # if we do want to chop the tree
+    else:
+        shared_time = tCutoff - tmrcas #shared time since tCutoff
+    
+        # get shared times and samples in each subtrees
+        i = 0 #start with first sample
+        withi = shared_time[i] >= 0 #true if share time with i
+        timesi = shared_time[withi][:, withi] #shared times with i
+        timesi = timesi - np.min(timesi) #trim off lineage from MRCA to tCutoff
+        times = [timesi] #start list with shared times in subtree with i
+        samples = [np.where(withi)] #samples in this subtree
+        taken = withi #samples already in a subtree
+        while sum(taken) < n: #while some samples not yet in a subtree
+            i = np.argmax(taken == False) #choose next sample not yet in a subtree
+            withi = shared_time[i] >= 0 #true if share time with i
+            timesi = shared_time[withi][:, withi] #shared times of subtree with i
+            timesi = timesi - np.min(timesi) #trim
+            times.append(timesi) #append        
+            samples.append(np.where(withi)) #samples in this subtree
+            taken = np.array([i[0] or i[1] for i in zip(taken, withi)]) #samples already in a subtree
 
     return times, [[int(i.label) for i in taxa[j]] for j in samples]
 

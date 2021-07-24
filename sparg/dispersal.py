@@ -1,24 +1,29 @@
 from scipy.optimize import minimize
 from sparg.utils import _sigma_phi, _logsumexp, _lognormpdf
 from sparg.importance_sampling import _log_birth_density
+import time
+import numpy as np
 
-def dispersal(locations, coal_times, pcoals, shared_times, samples, x0=[0,0], bnds=(None,None), n=None, important=True, tCutoff=1e4, tsplits=[], quiet=False, method='L-BFGS-B', options=None, scale_phi=1, remove_missing=False):
+def estimate(locations, shared_times, samples, x0, bnds=None, important=True, coal_times=None, pcoals=None, n=None, tCutoff=None, tsplits=[], quiet=False, method='L-BFGS-B', options=None, scale_phi=1, remove_missing=False):
     
     """
     find maximum likelihood dispersal given locations and tree info (coal_times, pcoals, shared_times, samples)'
     """
 
-    M = len(pcoals[0]) #number of trees per locus 
+    M = len(samples[0]) #number of trees per locus 
     if n == None:
         n = M #number of trees to use per locus
 
-    f = _sum_mc(locations, coal_times, pcoals, shared_times, samples, n=n, important=important, tCutoff=tCutoff, tsplits=tsplits, scale_phi=scale_phi, remove_missing=remove_missing) #negative composite log likelihood ratio
+    if bnds is None:
+        bnds = tuple([(None,None) for _ in x0]) #make the same length as x0
+
+    f = _sum_mc(locations, shared_times, samples, coal_times=coal_times, pcoals=pcoals, n=n, important=important, tCutoff=tCutoff, tsplits=tsplits, scale_phi=scale_phi, remove_missing=remove_missing) #negative composite log likelihood ratio
 
     if not quiet:
         print('searching for maximum likelihood parameters...')
         t0 = time.time()
 
-    m = minimize( f, x0 = x0, bounds = bnds, method=method, options=options) #find MLE
+    m = minimize(f, x0=x0, bounds=bnds, method=method, options=options) #find MLE
 
     if not quiet:
         print('the max is ', m.x)
@@ -26,54 +31,69 @@ def dispersal(locations, coal_times, pcoals, shared_times, samples, x0=[0,0], bn
 
     return m
 
-def _sum_mc(locations, coal_times, pcoals, shared_times, samples, n = None, important = True, tCutoff = 1e6, tsplits=[], scale_phi=1, remove_missing=False):
+def _sum_mc(locations, shared_times, samples, coal_times=None, pcoals=None, n=None, important=True, tCutoff=None, tsplits=[], scale_phi=1, remove_missing=False):
     
     """
     sum monte carlo estimates of log likelihood ratios across loci
     """
 
-    M = len(pcoals[0]) #unmber of trees per locus
+    M = len(samples[0]) #unmber of trees per locus
     if n == None:
         n = M #number of trees to use per locus
     elif n > M:
         print('must have n<=M: cant use more trees than were sampled')
-        exit
+        return 
 
     def sumf(x):
+        Sigma, phi = _sigma_phi(x, tsplits, important) 
+        if important:
+            phi = phi / scale_phi # scaled so that estimated phi is scale_phi times true value, to put on same scale as dispersal
         g = 0
-        nloci = len(pcoals)
+        nloci = len(samples)
         for i in range(nloci):
-            g -= _mc(shared_times[i][0:n], #use n samples at each locus
-                    samples[i][0:n],
-                    pcoals[i][0:n],
-                    coal_times[i][0:n],
-                    _sigma_phi(x, tsplits, important)[1]/scale_phi, #phi (prescaled so that estimated phi is scale_phi times true value, to put on same scale as dispersal)
-                    _sigma_phi(x, tsplits, important)[0], #sigma
-                    locations,
-                    tCutoff,
-                    important,
-                    tsplits, remove_missing)
+            coal_timesi = None
+            if coal_times is not None:
+                coal_timesi = coal_times[i][0:n]
+            pcoalsi = None
+            if pcoals is not None:
+                pcoalsi = pcoals[i][0:n]
+            g -= _mc(
+                     locations=locations,
+                     shared_times=shared_times[i][0:n], #use n samples at each locus
+                     samples=samples[i][0:n],
+                     coal_times=coal_timesi,
+                     pcoals=pcoalsi,
+                     Sigma=Sigma,
+                     phi=phi, 
+                     tCutoff=tCutoff,
+                     important=important,
+                     tsplits=tsplits, 
+                     remove_missing=remove_missing
+                    )
         return g
 
     return sumf
 
-def _mc(shared_times, samples, pcoals, coal_times, phi, Sigma, locations, tCutoff=1e4, important=True, tsplits=[], remove_missing=False):
+def _mc(locations, shared_times, samples, Sigma, phi=None, coal_times=None, pcoals=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
     
     """
     estimate log likelihood ratio of the locations given parameters (Sigma,phi) vs data given standard coalescent with Monte Carlo
     """
 
-    M = len(pcoals) #number of samples of branch lengths
+    M = len(samples) #number of samples of branch lengths
     LLRs = np.zeros(M) #log likelihood ratios
     for i,shared_time in enumerate(shared_times):
 
-        LLRs[i] = _loglikelihood_ratio(shared_time, samples[i], pcoals[i], coal_times[i], phi, Sigma, locations, tCutoff, important, tsplits, remove_missing)
+        if coal_times is None and pcoals is None:
+            coal_time, pcoal = None, None
+
+        LLRs[i] = _loglikelihood_ratio(locations, shared_time, samples[i], Sigma, phi, coal_time, pcoal, tCutoff, important, tsplits, remove_missing)
 
     LLRhat = _logsumexp(LLRs) - np.log(M) #average over trees
 
     return LLRhat #monte carlo estimate of log likelihood ratio
 
-def _loglikelihood_ratio(shared_times, samples, pcoal, coal_times, phi, Sigma, locations, tCutoff=1e4, important=True, tsplits=[], remove_missing=False):
+def _loglikelihood_ratio(locations, shared_times, samples, Sigma, phi=None, coal_times=None, pcoal=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
         
     """ 
     log likelihood of locations given parameters and tree summaries
@@ -92,7 +112,7 @@ def _loglikelihood_ratio(shared_times, samples, pcoal, coal_times, phi, Sigma, l
 def _location_loglikelihood(locations, shared_time, Sigma, tsplits=[], remove_missing=False):
     
     """
-    log likelihood of locations given shared times and dispersal matrix
+    log likelihood of locations given mean location and dispersal covariance 
     """
 
     if remove_missing:
@@ -143,6 +163,20 @@ def _location_loglikelihood(locations, shared_time, Sigma, tsplits=[], remove_mi
     if np.linalg.matrix_rank(cov) == len(cov):
         return _lognormpdf(x, mean, cov)
     else:
-        #print('singular matrix')
-        return 0 
+        print('singular matrix')
+        return 
+
+def mle(locations, shared_time):
+    
+    """
+    MLE dispersal rate
+    """
+
+    n = len(locations) #number of samples
+    Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[0:-1]; #matrix for mean centering and dropping one sample
+    locs = np.matmul(Tmat, locations) #mean center locations and drop last sample (bc lost a degree of freedom when taking mean)
+    stime = np.matmul(Tmat, np.matmul(shared_time, np.transpose(Tmat))) #mean center shared times
+    Tinv = np.linalg.pinv(np.array(stime)) #inverse of shared time matrix
+
+    return np.matmul(np.matmul(np.transpose(locs), Tinv), locs) / (n - 1) #mle dispersal rate 
 

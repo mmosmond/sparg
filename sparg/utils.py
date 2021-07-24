@@ -81,8 +81,10 @@ def _sigma_phi(x, tsplits=[], important=True):
     """
     convert list of parameters being estimated into covariance matrix and birth rate
     """
-
-    d = int((len(x) - 1)/(len(tsplits)+1)) #number of dispersal parameters we're estimating
+    if important:
+        d = int((len(x) - 1) / (len(tsplits) + 1)) #number of dispersal parameters we're estimating
+    else:
+        d = int(len(x) / (len(tsplits) + 1)) #number of dispersal parameters we're estimating
     
     Sigma = [] #make as list
     for i in range(len(tsplits) + 1):
@@ -95,8 +97,8 @@ def _sigma_phi(x, tsplits=[], important=True):
     if important:
         phi = x[d*(len(tsplits) + 1)]
     else:
-        phi = 1 #if not importance sampling this value is irrelevant, so we just supply an arbitrary value in case nothing supplied by user
+        phi = None #if not importance sampling
 
-    return [Sigma,phi]
+    return [Sigma, phi]
 
 
