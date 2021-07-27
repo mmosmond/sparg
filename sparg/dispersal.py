@@ -1,13 +1,13 @@
 from scipy.optimize import minimize
 from sparg.utils import _sigma_phi, _logsumexp, _lognormpdf
-from sparg.importance_sampling import _log_birth_density
+from sparg.importance_sample import _log_birth_density
 import time
 import numpy as np
 
-def estimate(locations, shared_times, samples, x0, bnds=None, important=True, coal_times=None, pcoals=None, n=None, tCutoff=None, tsplits=[], quiet=False, method='L-BFGS-B', options=None, scale_phi=1, remove_missing=False):
+def estimate(locations, shared_times, samples, x0, bnds=None, important=True, coal_times=None, logpcoals=None, n=None, tCutoff=None, tsplits=[], quiet=False, method='L-BFGS-B', options=None, scale_phi=1, remove_missing=False):
     
     """
-    find maximum likelihood dispersal given locations and tree info (coal_times, pcoals, shared_times, samples)'
+    find maximum likelihood dispersal given locations and tree info (coal_times, logpcoals, shared_times, samples)'
     """
 
     M = len(samples[0]) #number of trees per locus 
@@ -17,7 +17,7 @@ def estimate(locations, shared_times, samples, x0, bnds=None, important=True, co
     if bnds is None:
         bnds = tuple([(None,None) for _ in x0]) #make the same length as x0
 
-    f = _sum_mc(locations, shared_times, samples, coal_times=coal_times, pcoals=pcoals, n=n, important=important, tCutoff=tCutoff, tsplits=tsplits, scale_phi=scale_phi, remove_missing=remove_missing) #negative composite log likelihood ratio
+    f = _sum_mc(locations, shared_times, samples, coal_times=coal_times, logpcoals=logpcoals, n=n, important=important, tCutoff=tCutoff, tsplits=tsplits, scale_phi=scale_phi, remove_missing=remove_missing) #negative composite log likelihood ratio
 
     if not quiet:
         print('searching for maximum likelihood parameters...')
@@ -31,7 +31,7 @@ def estimate(locations, shared_times, samples, x0, bnds=None, important=True, co
 
     return m
 
-def _sum_mc(locations, shared_times, samples, coal_times=None, pcoals=None, n=None, important=True, tCutoff=None, tsplits=[], scale_phi=1, remove_missing=False):
+def _sum_mc(locations, shared_times, samples, coal_times=None, logpcoals=None, n=None, important=True, tCutoff=None, tsplits=[], scale_phi=1, remove_missing=False):
     
     """
     sum monte carlo estimates of log likelihood ratios across loci
@@ -54,15 +54,15 @@ def _sum_mc(locations, shared_times, samples, coal_times=None, pcoals=None, n=No
             coal_timesi = None
             if coal_times is not None:
                 coal_timesi = coal_times[i][0:n]
-            pcoalsi = None
-            if pcoals is not None:
-                pcoalsi = pcoals[i][0:n]
+            logpcoalsi = None
+            if logpcoals is not None:
+                logpcoalsi = logpcoals[i][0:n]
             g -= _mc(
                      locations=locations,
                      shared_times=shared_times[i][0:n], #use n samples at each locus
                      samples=samples[i][0:n],
                      coal_times=coal_timesi,
-                     pcoals=pcoalsi,
+                     logpcoals=logpcoalsi,
                      Sigma=Sigma,
                      phi=phi, 
                      tCutoff=tCutoff,
@@ -74,7 +74,7 @@ def _sum_mc(locations, shared_times, samples, coal_times=None, pcoals=None, n=No
 
     return sumf
 
-def _mc(locations, shared_times, samples, Sigma, phi=None, coal_times=None, pcoals=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
+def _mc(locations, shared_times, samples, Sigma, phi=None, coal_times=None, logpcoals=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
     
     """
     estimate log likelihood ratio of the locations given parameters (Sigma,phi) vs data given standard coalescent with Monte Carlo
@@ -82,30 +82,31 @@ def _mc(locations, shared_times, samples, Sigma, phi=None, coal_times=None, pcoa
 
     M = len(samples) #number of samples of branch lengths
     LLRs = np.zeros(M) #log likelihood ratios
-    for i,shared_time in enumerate(shared_times):
 
-        if coal_times is None and pcoals is None:
-            coal_time, pcoal = None, None
+    if coal_times is None and logpcoals is None:
+        coal_times, logpcoals = [None for _ in samples], [None for _ in samples] 
 
-        LLRs[i] = _loglikelihood_ratio(locations, shared_time, samples[i], Sigma, phi, coal_time, pcoal, tCutoff, important, tsplits, remove_missing)
+    for i, (shared_time, sample, coal_time, logpcoal) in enumerate(zip(shared_times, samples, coal_times, logpcoals)):
 
-    LLRhat = _logsumexp(LLRs) - np.log(M) #average over trees
+        LLRs[i] = _loglikelihood_ratio(locations, shared_time, sample, Sigma, phi, coal_time, logpcoal, tCutoff, important, tsplits, remove_missing)
+
+    LLRhat = _logsumexp(LLRs) - np.log(M) #average over trees at this locus
 
     return LLRhat #monte carlo estimate of log likelihood ratio
 
-def _loglikelihood_ratio(locations, shared_times, samples, Sigma, phi=None, coal_times=None, pcoal=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
+def _loglikelihood_ratio(locations, shared_times, samples, Sigma, phi=None, coal_times=None, logpcoals=None, tCutoff=None, important=True, tsplits=[], remove_missing=False):
         
     """ 
     log likelihood of locations given parameters and tree summaries
     """
 
     LLR = 0
-    for i,shared_time in enumerate(shared_times):
+    for shared_time, sample in zip(shared_times, samples): #looping over subtrees
         if len(shared_time) > 1: #need at least two samples in subtree to mean center and still have info on dispersal rate
-            LLR += _location_loglikelihood(locations[samples[i]], shared_time, Sigma, tsplits, remove_missing) #log likelihood of locations given shared evolutionary times, dispersal matrix, and MRCA location
+            LLR += _location_loglikelihood(locations[sample], shared_time, Sigma, tsplits, remove_missing) #log likelihood of locations given shared evolutionary times, dispersal matrix, and MRCA location
     if important:
         LLR += _log_birth_density(coal_times, phi, tCutoff) #log probability of coalescence times given pure birth process with rate phi
-        LLR -= pcoal #log probability density of coalescence times under standard coalescent with varying population size and cutoff
+        LLR -= logpcoals #log probability density of coalescence times under standard coalescent with varying population size and cutoff
 
     return LLR
 

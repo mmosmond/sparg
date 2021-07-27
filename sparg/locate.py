@@ -1,72 +1,79 @@
 import numpy as np
 from scipy.optimize import minimize
 from sparg.utils import _get_focal_index, _lognormpdf, _logsumexp, _sigma_phi
-from sparg.importance_sampling import _log_birth_density
+from sparg.importance_sample import _log_birth_density
 
-def locate(nodes, times, treefiles, mlefiles, locations, tCutoff=1e4, importance=True, x0=[0,0], bnds=((None,None),(None,None)), method='L-BFGS-B', weight=True, keep=None, tsplits=[], BLUP=False):
+def locate(nodes, times, locations, shared_times, samples, mles, important=True, coal_times=None, pcoals=None, x0=None, bnds=((None,None),(None,None)), treefiles=None, mlefiles=None, tCutoff=None, method='L-BFGS-B', weight=False, keep=None, tsplits=[], BLUP=False):
 
     """
-    locate nodes=nodes at times=times using trees (treefiles), mle dispersal (mlefiles), and sample locations (locations)
+    locate ancestors of nodes=nodes at times=times using shared times (shared_times), mle dispersal (mle), and sample locations (locations)
     """
 
     # loop over loci
     mle_locations = []
     weights = []
-    for treefile,mlefile in zip(treefiles,mlefiles):
-
-        # load processed trees at this locus
-        processed_trees = np.load(treefile, allow_pickle=True)
-        coal_times = processed_trees['coal_times']
-        pcoals = processed_trees['pcoals']
-        shared_times = processed_trees['shared_times']
-        samples = processed_trees['samples']
+    #for treefile,mlefile in zip(treefiles,mlefiles):
+    
+        ## load processed trees at this locus
+        #processed_trees = np.load(treefile, allow_pickle=True)
+        #coal_times = processed_trees['coal_times']
+        #pcoals = processed_trees['pcoals']
+        #shared_times = processed_trees['shared_times']
+        #samples = processed_trees['samples']
+   
+    for i, (shared_times_i, samples_i, mles_i) in enumerate(zip(shared_times, samples, mles)):
+        if important:
+            coal_times_i = coal_times[i]
+            pcoals_i = pcoals[i]
+        else:
+            coal_times_i, pcoals_i = None, None 
 
         # if we only have one sampled tree at a locus then we can find the MLE analytically
-        if len(pcoals[0]) == 1:
+        if len(samples_i) == 1:
             BLUP = True
-            print('only one tree at this locus so calculating MLE locations analytically')
-
+            #print('only one tree at this locus so calculating MLE locations analytically')
+    
         # load mle dispersal and branching rate at this locus
-        x = np.load(mlefile, allow_pickle=True).item().x
-        [SIGMA, phi] =  _sigma_phi(x, tsplits, importance) 
+        #x = np.load(mlefile, allow_pickle=True).item().x
+        [SIGMA, phi] =  _sigma_phi(mles_i, tsplits, important) 
         
         # loop over times
-        mle_locations_t = [] #locations for all nodes at all loci at this time
+        mle_locations_t = [] #locations for all nodes at this time
         weights_t = [] #weights of locations (measure of uncertainty)
         for time in times:
-
+    
             # loop over nodes
-            mle_locations_i = [] #locations for all nodes at particular time at this locus
-            weights_i = []
-            for focal_node in nodes:
+            mle_locations_n = [] #locations for all nodes at particular time at this locus
+            weights_n = []
+            for node in nodes:
                 
-                # get location of node i at time t at locus
-                f = _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_times, samples, locations, keep=keep, phi=phi, SIGMA=SIGMA, locus=0, tCutoff=tCutoff, importance=importance, tsplits=tsplits, BLUP=BLUP) #mean log likelihood or mean MLE (if BLUP)
-
+                # get location of node i at time t at this locus
+                f = _ancestor_location_meanloglikelihood(node, time, shared_times_i, samples_i, locations, SIGMA=SIGMA, important=important, coal_times=coal_times_i, pcoals=pcoals_i, phi=phi, keep=keep, tCutoff=tCutoff, tsplits=tsplits, BLUP=BLUP) #mean log likelihood or mean MLE (if BLUP)
+    
                 if f is None:
-                    mle_locations_i.append(np.ones(len(x0)) * np.nan)
+                    mle_locations_n.append(np.ones(len(x0)) * np.nan)
                     #print('locating ancestor of %d at time %d failed at a locus' %(focal_node, time))
-
+    
                 else:
-
+    
                     # if we want the best linear unbiased predictor (BLUP), ie the importance sampled MLE 
                     if BLUP:
                    
-                        mle_locations_i.append(f) #just add mean MLE
+                        mle_locations_n.append(f) #just add mean MLE
     
                         if weight:
                             print('weights not implemented for BLUPs, if you want weights set BLUP=False')
     
-		    # find the true MLE by finding the max of the average log likelihood across importance samples
+                    # find the true MLE by finding the max of the average log likelihood across importance samples
                     else:
     
                         g = lambda x: -f(x) #flip bc we look for min
-                        gmin = minimize(g, x0 = x0, bounds = bnds, method=method) #find MLE
+                        gmin = minimize(g, x0=x0, bounds=bnds, method=method) #find MLE
                         # if numerical search worked
                         if gmin.success:
-                            mle_locations_i.append(gmin.x) #append mle location for this node
+                            mle_locations_n.append(gmin.x) #append mle location for this node
                         else:
-                            mle_locations_i.append(np.ones(len(x0)) * np.nan) #some nans to fill up the matrix but not influence results
+                            mle_locations_n.append(np.ones(len(x0)) * np.nan) #some nans to fill up the matrix but not influence results
                             #print('locating ancestor of %d at time %d failed at a locus' %(focal_node, time))
     
                         # we may want to weight locations over loci depending on how certain the estimate is
@@ -75,28 +82,26 @@ def locate(nodes, times, treefiles, mlefiles, locations, tCutoff=1e4, importance
                                 if gmin.success:
                                     if gmin.x[0] > bnds[0][0] and gmin.x[0] < bnds[0][1] and gmin.x[1] > bnds[1][0] and gmin.x[1] < bnds[1][1]: # if did not hit bounds
                                         cov = gmin['hess_inv'].todense() #inverse hessian (negative fisher info) is estimate of covariance matrix
-                                        weights_i.append(cov) #append covariance matrix as weights
+                                        weights_n.append(cov) #append covariance matrix as weights
                                     else:
-                                        weights_i.append(np.zeros((len(x0)-1, len(x0)-1))) #dont use this estimate if hit bounds                
+                                        weights_n.append(np.zeros((len(x0)-1, len(x0)-1))) #dont use this estimate if hit bounds                
                                 else:
-                                    weights_i.append(np.zeros((len(x0)-1, len(x0)-1))) #dont use this estimate if numerical minimizer failed                
+                                    weights_n.append(np.zeros((len(x0)-1, len(x0)-1))) #dont use this estimate if numerical minimizer failed                
                             else:
-                                weights_i.append(1) #weights all equally if don't have the hessian
+                                weights_n.append(1) #weights all equally if don't have the hessian
                                 print('choose method=L-BFGS-B if you want weights')
-
-            mle_locations_t.append(mle_locations_i) #append locations across all nodes for particular time at particular locus
-            weights_t.append(weights_i) #append weights across all nodes for particular time at particular locus
+    
+            mle_locations_t.append(mle_locations_n) #append locations across all nodes for particular time at particular locus
+            weights_t.append(weights_n) #append weights across all nodes for particular time at particular locus
         mle_locations.append(mle_locations_t) #append locations acrocss all nodes and all times for particular locus
         weights.append(weights_t) #append weights acrocss all nodes and all times for particular locus
-
-    #print(mle_locations)
 
     if weight:
         return np.array(mle_locations), np.array(weights)
     else:
         return np.array(mle_locations) 
 
-def _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_times, samples, locations, keep=None, phi=1, SIGMA=None, locus=0, tCutoff=1e4, importance=True, tsplits=[], BLUP=False):
+def _ancestor_location_meanloglikelihood(node, time, shared_times, samples, locations, SIGMA=None, important=True, coal_times=None, pcoals=None, phi=None, keep=None, tCutoff=None, tsplits=[], BLUP=False):
     """
     log likelihood of ancestor location (ancestor of node=node at time=time) averaged over sampled trees, calculated using the coalescent times (coal_times), probability of the coalescent times (pcoals), shared evolutionary times (shared_times), and locations (locations). samples connects the tips of the trees with locations.
     """
@@ -104,11 +109,11 @@ def _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_
     fs = []
     ws = []
     #loop over trees (importance samples) at a locus
-    for tree,sample in enumerate(samples[locus]): 
+    for tree,sample in enumerate(samples): 
         
         # get shared times and sample locations
         n,m = _get_focal_index(node, sample) #subtree and sample index of focal_node
-        sts = shared_times[locus][tree][n] #shared times between all sample lineages in subtree
+        sts = shared_times[tree][n] #shared times between all sample lineages in subtree
         atimes = _atimes(sts, time, m) #get shared times between sample lineages and ancestor lineage
         if keep is None:
             alltimes = _alltimes(sts, atimes, keep=keep)
@@ -138,8 +143,8 @@ def _ancestor_location_meanloglikelihood(node, time, coal_times, pcoals, shared_
                 fs.append(lambda x: 0) #this is in case there is problem with inverting matrices in get_ahatavar  
  
         # importance weights
-        if importance:
-            ws.append(_log_birth_density(coal_times[locus][tree], phi, tCutoff) - pcoals[locus][tree]) #log importance weight
+        if important:
+            ws.append(_log_birth_density(coal_times[tree], phi, tCutoff) - pcoals[tree]) #log importance weight
         else:
             ws.append(0) #equal (log) weights for all
 
