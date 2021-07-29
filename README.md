@@ -12,9 +12,8 @@ Estimating dispersal rates and locating genetic ancestors with genome-wide genea
 
 This is the software. For the paper, see https://github.com/mmosmond/sparg-ms.
 
-Warning: this is a *very* rough start to what I hope will soon be a full Python package with tests and tutorials. Off canoeing for a few days -- stay tuned!
+See tests/tutorial.ipynb for a demo on how to use.
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.
-Organization of this repo follows https://github.com/vsbuffalo/cvtkpy.
 Logo inspired by concrete poetry of bpNichol.
