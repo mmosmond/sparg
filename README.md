@@ -20,7 +20,7 @@ Using python3 you can install from PyPi from the command line
 pip install sparg
 ```
 
-See tutorial/tutorial.ipynb for a demo on how to use.
+See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. To run this Jupyter notebook yourself you'll need to install msprime, pyslim, matplotlib, and ipywidgets.
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.
