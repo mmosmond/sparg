@@ -1,12 +1,11 @@
 Metadata-Version: 2.1
 Name: sparg
-Version: 1.0.0
+Version: 1.0.1
 Summary: A package to estimate dispersal rates and locate genetic ancestors from tree sequences
 Home-page: https://github.com/mmosmond/sparg
 Author: Matthew Osmond
 Author-email: mm.osmond@utoronto.ca
 License: UNKNOWN
-Project-URL: Source, https://github.com/mmosmond/sparg
 Project-URL: Bug Tracker, https://github.com/mmosmond/sparg/issues
 Project-URL: Tutorial, https://github.com/mmosmond/sparg/tutorial/tutorial.ipynb
 Platform: UNKNOWN
@@ -31,7 +30,15 @@ Estimating dispersal rates and locating genetic ancestors with genome-wide genea
 
 This is the software. For the paper, see https://github.com/mmosmond/sparg-ms.
 
-See tests/tutorial.ipynb for a demo on how to use.
+## Installation
+
+Using python3 you can install from PyPi from the command line
+
+```
+pip install sparg
+```
+
+See tutorial/tutorial.ipynb for a demo on how to use.
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.

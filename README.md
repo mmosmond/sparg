@@ -12,7 +12,15 @@ Estimating dispersal rates and locating genetic ancestors with genome-wide genea
 
 This is the software. For the paper, see https://github.com/mmosmond/sparg-ms.
 
-See tests/tutorial.ipynb for a demo on how to use.
+## Installation
+
+Using python3 you can install from PyPi from the command line
+
+```
+pip install sparg
+```
+
+See tutorial/tutorial.ipynb for a demo on how to use.
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.
