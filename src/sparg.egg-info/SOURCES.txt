@@ -1,0 +1,16 @@
+LICENSE
+README.md
+pyproject.toml
+setup.cfg
+src/sparg/__init__.py
+src/sparg/dispersal.py
+src/sparg/importance_sample.py
+src/sparg/locate.py
+src/sparg/relate.py
+src/sparg/trees.py
+src/sparg/utils.py
+src/sparg.egg-info/PKG-INFO
+src/sparg.egg-info/SOURCES.txt
+src/sparg.egg-info/dependency_links.txt
+src/sparg.egg-info/requires.txt
+src/sparg.egg-info/top_level.txt

@@ -12,9 +12,16 @@ Estimating dispersal rates and locating genetic ancestors with genome-wide genea
 
 This is the software. For the paper, see https://github.com/mmosmond/sparg-ms.
 
-Warning: this is a *very* rough start to what I hope will soon be a full Python package with tests and tutorials. Off canoeing for a few days -- stay tuned!
+## Installation
+
+Using python3 you can install from PyPi from the command line
+
+```
+pip install sparg
+```
+
+See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. To run this Jupyter notebook yourself you'll need to install msprime, pyslim, matplotlib, and ipywidgets.
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.
-Organization of this repo follows https://github.com/vsbuffalo/cvtkpy.
 Logo inspired by concrete poetry of bpNichol.
