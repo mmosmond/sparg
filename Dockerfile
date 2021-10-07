@@ -17,4 +17,4 @@ RUN adduser --disabled-password \
 WORKDIR ${HOME}
 
 # install dependencies
-pip install -r requirements.txt
+RUN pip install -r requirements.txt
