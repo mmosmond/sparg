@@ -1,0 +1,6 @@
+sparg
+msprime
+pyslim
+tskit
+numpy
+matplotlib
