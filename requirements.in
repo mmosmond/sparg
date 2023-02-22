@@ -1,6 +1,5 @@
-sparg
-msprime
-pyslim
-tskit
-numpy
+tskit==0.3.6
+msprime==1.0.1
+pyslim==0.600
+sparg==1.0.1
 matplotlib
