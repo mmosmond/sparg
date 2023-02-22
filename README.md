@@ -20,7 +20,7 @@ You can install using [pip](https://pypi.org/project/sparg/1.0.1/)
 pip install sparg
 ```
 
-See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. You can run the tutorial yourself with [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mmosmond/sparg/HEAD?labpath=tutorial%2Ftutorial.ipynb) directly in your browser. To run the tutorial locally you'll need to install a few dependencies, e.g., in the terminal run
+See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. You can run the tutorial directly in your browser with [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mmosmond/sparg/HEAD?labpath=tutorial%2Ftutorial.ipynb). To run the tutorial locally you'll need to install a few dependencies, e.g., in the terminal run
 
 ```
 python3 venv -m ~/.virtualenvs/sparg #make virtual environment
