@@ -14,13 +14,22 @@ This is the software. For the paper, see https://github.com/mmosmond/sparg-ms.
 
 ## Installation
 
-Using python3 you can install from PyPi from the command line
+You can install using [pip](https://pypi.org/project/sparg/1.0.1/)
 
 ```
 pip install sparg
 ```
 
-See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. To run this Jupyter notebook locally you'll need to install msprime, pyslim, matplotlib, and ipywidgets. You can also try it out here [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mmosmond/sparg/HEAD?labpath=tutorial%2Ftutorial.ipynb) without having to do much of anything!
+See the [tutorial](https://github.com/mmosmond/sparg/blob/main/tutorial/tutorial.ipynb) for a demo on how to use. You can run the tutorial yourself with [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mmosmond/sparg/HEAD?labpath=tutorial%2Ftutorial.ipynb) directly in your browser. To run the tutorial locally you'll need to install a few dependencies, e.g., in the terminal run
+
+```
+python3 venv -m ~/.virtualenvs/sparg #make virtual environment
+source ~/.virtualenvs/sparg/bin/activate #load virtual env
+pip install -r requirements.in #install dependencies for tutorial (this is what Binder needs)
+pip install jupyterlab #install jupyterlab
+python -m ipykernel install --name=sparg #make virtual env available in jupyter
+jupyter-lab tutorial/tutorial.ipynb #launch tutorial
+```
 
 ## Acknowledgements
 Some code for importance sampling adapted from https://github.com/35ajstern/palm.
