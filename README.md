@@ -1,3 +1,5 @@
+NOTE: This is old software for inferring spatial histories from tree sequences. For the latest version of this software, see `spacetrees`: https://github.com/osmond-lab/spacetrees. The name `sparg` is now reserved for software that infers spatial histories from full ancestral recombination graphs: https://github.com/osmond-lab/sparg. 
+
 ```
    sparg    s parg    sparg    s parg   sparg 
   spa  rg   sp   ar  sp   ar   spa     sp   ar
